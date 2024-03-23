@@ -8,8 +8,7 @@ import (
 	"sync"
 )
 
-// Ensures that the Out writer gets a line at a time. Useful if you have multiple things
-// writing in parallel.
+// Ensures that the Out writer gets a line at a time.
 type lineBuffer struct {
 	Out    io.Writer
 	Prefix []byte // Optional

@@ -19,7 +19,6 @@ pre-commit: update clean coverage.txt
 	go mod tidy
 clean:
 	rm -f coverage.txt $(GOBIN)/backup-helper *.log
-
 run: install
 	rm *.log
 	backup-helper in out

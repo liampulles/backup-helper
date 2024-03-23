@@ -102,8 +102,8 @@ func run() (err error) {
 		},
 	})
 
-	// Run cshatag for both (in parallel)
-	logger.Debug("running cshatag on input and output folders (in parallel)")
+	// Run cshatag for both folders (concurrently)
+	logger.Debug("running cshatag on input and output folders (concurrently)")
 	var wg sync.WaitGroup
 	var cshaInErr, cshaOutErr error
 	var cshaInLines, cshaOutLines []string
@@ -123,22 +123,12 @@ func run() (err error) {
 			"lines", len(cshaOutLines))
 	}()
 	wg.Wait()
-	mailReport.Sections = append(mailReport.Sections, section{
-		Title:    "cshatag on input folder",
-		Detail:   fmt.Sprintf("[cshatag -q -recursive %s]", inFolder),
-		LogLines: cshaInLines,
-	})
-	mailReport.Sections = append(mailReport.Sections, section{
-		Title:    "cshatag on output folder",
-		Detail:   fmt.Sprintf("[cshatag -q -recursive %s]", outFolder),
-		LogLines: cshaOutLines,
-	})
-	if cshaInErr != nil {
-		err = errors.Join(err, fmt.Errorf("cshatag on input folder failed: %w", cshaInErr))
-	}
-	if cshaOutErr != nil {
-		err = errors.Join(err, fmt.Errorf("cshatag on output folder failed: %w", cshaOutErr))
-	}
+	addExecSection(&mailReport, "cshatag on input folder", cshaInLines,
+		"cshatag", "-q", "-recursive", inFolder)
+	addExecSection(&mailReport, "cshatag on output folder", cshaOutLines,
+		"cshatag", "-q", "-recursive", outFolder)
+	err = errors.Join(err, fmt.Errorf("cshatag on input folder failed: %w", cshaInErr))
+	err = errors.Join(err, fmt.Errorf("cshatag on output folder failed: %w", cshaOutErr))
 	if err != nil {
 		return err
 	}
@@ -147,11 +137,8 @@ func run() (err error) {
 	// -> Need a slash at the end of the in folder to indicate to rsync to sync the contents into out
 	inWithSlash := inFolder + string(filepath.Separator)
 	rsyncLines, err := execCommand("rsync", "rsync", "-avu", "--delete", inWithSlash, outFolder)
-	mailReport.Sections = append(mailReport.Sections, section{
-		Title:    "rsync from input to output folder",
-		Detail:   fmt.Sprintf("[rsync -avu --delete %s %s]", inWithSlash, outFolder),
-		LogLines: rsyncLines,
-	})
+	addExecSection(&mailReport, "rsync from input to output folder", rsyncLines,
+		"rsync", "-avu", "--delete", inWithSlash, outFolder)
 
 	logger.Info("sync successful!")
 	return nil
@@ -230,6 +217,14 @@ type section struct {
 	Title    string
 	Detail   string
 	LogLines []string
+}
+
+func addExecSection(r *report, desc string, outLines []string, name string, args ...string) {
+	r.Sections = append(r.Sections, section{
+		Title:    desc,
+		Detail:   fmt.Sprintf("[%s %s]", name, strings.Join(args, " ")),
+		LogLines: outLines,
+	})
 }
 
 func sendMail(r report) error {
@@ -342,36 +337,4 @@ func loadConfig() error {
 	cfg = &c
 
 	return nil
-}
-
-// ---
-// --- Test/Debugging
-// ---
-
-func testMail() error {
-	r := report{
-		Title:  "Test mail",
-		Detail: "This is the main introduction paragraph.",
-		Sections: []section{
-			{
-				Title:  "Section 1",
-				Detail: "This is the paragraph for section 1",
-				LogLines: []string{
-					"section 1 bullet 1",
-					"section 1 bullet 2",
-				},
-			},
-			{
-				Title:  "Section 2",
-				Detail: "This is the paragraph for section 2",
-				LogLines: []string{
-					"section 2 bullet 1",
-					"section 2 bullet 2",
-					"section 2 bullet 3",
-				},
-			},
-		},
-	}
-
-	return sendMail(r)
 }
