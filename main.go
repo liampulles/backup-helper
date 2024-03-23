@@ -94,8 +94,10 @@ func run() (err error) {
 		return fmt.Errorf("out folder: %w", err)
 	}
 	mailReport.Sections = append(mailReport.Sections, section{
-		Title:  "Folders checked",
-		Detail: "This test tries to write, read, and delete a temporary file in both the input and output folders.",
+		Title: "Folders checked",
+		Detail: `This test tries to write, read, and delete a temporary file
+		in both the input and output folders. It also checks for the existence
+		of .backup-helper-check files.`,
 		LogLines: []string{
 			fmt.Sprintf("%s: OK", inFolder),
 			fmt.Sprintf("%s: OK", outFolder),
@@ -127,8 +129,12 @@ func run() (err error) {
 		"cshatag", "-q", "-recursive", inFolder)
 	addExecSection(&mailReport, "cshatag on output folder", cshaOutLines,
 		"cshatag", "-q", "-recursive", outFolder)
-	err = errors.Join(err, fmt.Errorf("cshatag on input folder failed: %w", cshaInErr))
-	err = errors.Join(err, fmt.Errorf("cshatag on output folder failed: %w", cshaOutErr))
+	if cshaInErr != nil {
+		err = errors.Join(err, fmt.Errorf("cshatag on input folder failed: %w", cshaInErr))
+	}
+	if cshaOutErr != nil {
+		err = errors.Join(err, fmt.Errorf("cshatag on output folder failed: %w", cshaOutErr))
+	}
 	if err != nil {
 		return err
 	}
@@ -136,9 +142,9 @@ func run() (err error) {
 	// Sync with rsync
 	// -> Need a slash at the end of the in folder to indicate to rsync to sync the contents into out
 	inWithSlash := inFolder + string(filepath.Separator)
-	rsyncLines, err := execCommand("rsync", "rsync", "-avu", "--delete", inWithSlash, outFolder)
+	rsyncLines, err := execCommand("rsync", "rsync", "-avX", "--delete", inWithSlash, outFolder)
 	addExecSection(&mailReport, "rsync from input to output folder", rsyncLines,
-		"rsync", "-avu", "--delete", inWithSlash, outFolder)
+		"rsync", "-avX", "--delete", inWithSlash, outFolder)
 
 	logger.Info("sync successful!")
 	return nil
@@ -149,9 +155,16 @@ func checkFolder(dir string) error {
 	testVal := rand.Int()
 	filename := fmt.Sprintf("testfile-%d.txt", testVal)
 	checkFile := filepath.Join(dir, filename)
+	smokeFile := filepath.Join(dir, ".backup-helper-check")
+
+	// Check for "smoke file"
+	_, err := os.Stat(smokeFile)
+	if err != nil {
+		return fmt.Errorf("smoke file check err (maybe not mounted?): %w", err)
+	}
 
 	// Check write
-	err := os.WriteFile(checkFile, []byte(strconv.Itoa(testVal)), 0644)
+	err = os.WriteFile(checkFile, []byte(strconv.Itoa(testVal)), 0644)
 	if err != nil {
 		return fmt.Errorf("write err: %w", err)
 	}
