@@ -6,7 +6,10 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
+	"math/rand"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,14 +55,18 @@ func run() (err error) {
 	if err != nil {
 		return err
 	}
-	err = testMail()
+
+	// Check folders
+	err = checkFolder(inFolder)
 	if err != nil {
-		return err
+		return fmt.Errorf("in folder: %w", err)
+	}
+	err = checkFolder(outFolder)
+	if err != nil {
+		return fmt.Errorf("in folder: %w", err)
 	}
 
 	// TODO:
-	// - Check existence of .mounted files in source and target (smoke test)
-	// - Do a writes test to source and target and check RW is working (smoke test)
 	// - Run cshatag for both folders (in parallel?)
 	// - Parse exit code and output to understand file events
 	// - If failed to run, or any corrupt files: log, send an email, and stop (LES).
@@ -67,6 +74,38 @@ func run() (err error) {
 	// - Check for exit codes and capture output
 	// - If sync failed: LES
 	// - Then presuming all is well: LES
+	return nil
+}
+
+// Check the folders allow for read/write before doing anything
+func checkFolder(dir string) error {
+	testVal := rand.Int()
+	filename := fmt.Sprintf("testfile-%d.txt", testVal)
+	checkFile := filepath.Join(dir, filename)
+
+	// Check write
+	err := os.WriteFile(checkFile, []byte(strconv.Itoa(testVal)), 0644)
+	if err != nil {
+		return fmt.Errorf("write err: %w", err)
+	}
+
+	// Check read
+	readBytes, err := os.ReadFile(checkFile)
+	if err != nil {
+		return fmt.Errorf("read err: %w", err)
+	}
+	readVal, _ := strconv.Atoi(string(readBytes))
+	if testVal != readVal {
+		return fmt.Errorf("read check failed: different value (wanted %d, got %s)", testVal, string(readBytes))
+	}
+
+	// Cleanup
+	err = os.Remove(checkFile)
+	if err != nil {
+		return fmt.Errorf("cleanup err: %w", err)
+	}
+
+	logger.Info("folder check passed", "dir", dir)
 	return nil
 }
 
@@ -136,7 +175,8 @@ func mailClient() (*mail.SMTPClient, error) {
 	return mailClient, nil
 }
 
-var reportFmt = `<h2>{{.Title}}</h2>
+var reportFmt = `
+<h2>{{.Title}}</h2>
 <p>{{.Detail}}</p>
 
 {{range .Sections}}
