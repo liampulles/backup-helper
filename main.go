@@ -49,14 +49,21 @@ func run() (err error) {
 
 	// Send an email at the end
 	mailReport := report{
-		Title:  "Backup Helper report",
-		Detail: "The backup helper just ran. This report includes info on the cshatag output, and the rsync output.",
+		Detail: fmt.Sprintf("Started at %s. This report includes info on the cshatag output, and the rsync output.",
+			time.Now().Format(time.RFC3339)),
 	}
 	defer func() {
 		if err != nil {
+			mailReport.Title = "[ERROR] Backup Helper report"
 			mailReport.Sections = append(mailReport.Sections, section{
 				Title:  "Error",
 				Detail: fmt.Sprintf("Error contents: %s", err.Error()),
+			})
+		} else {
+			mailReport.Title = "[SUCCESS] Backup Helper report"
+			mailReport.Sections = append(mailReport.Sections, section{
+				Title:  "Success",
+				Detail: "No error reported - looking good!",
 			})
 		}
 		mErr := sendMail(mailReport)
@@ -89,7 +96,7 @@ func run() (err error) {
 	mailReport.Sections = append(mailReport.Sections, section{
 		Title:  "Folders checked",
 		Detail: "This test tries to write, read, and delete a temporary file in both the input and output folders.",
-		Bullets: []string{
+		LogLines: []string{
 			fmt.Sprintf("%s: OK", inFolder),
 			fmt.Sprintf("%s: OK", outFolder),
 		},
@@ -117,14 +124,14 @@ func run() (err error) {
 	}()
 	wg.Wait()
 	mailReport.Sections = append(mailReport.Sections, section{
-		Title:   "cshatag on input folder",
-		Detail:  "Log lines below...",
-		Bullets: cshaInLines,
+		Title:    "cshatag on input folder",
+		Detail:   fmt.Sprintf("[cshatag -q -recursive %s]", inFolder),
+		LogLines: cshaInLines,
 	})
 	mailReport.Sections = append(mailReport.Sections, section{
-		Title:   "cshatag on output folder",
-		Detail:  "Log lines below...",
-		Bullets: cshaOutLines,
+		Title:    "cshatag on output folder",
+		Detail:   fmt.Sprintf("[cshatag -q -recursive %s]", outFolder),
+		LogLines: cshaOutLines,
 	})
 	if cshaInErr != nil {
 		err = errors.Join(err, fmt.Errorf("cshatag on input folder failed: %w", cshaInErr))
@@ -136,13 +143,17 @@ func run() (err error) {
 		return err
 	}
 
-	// TODO:
-	// - Parse exit code and output to understand file events
-	// - If failed to run, or any corrupt files: log, send an email, and stop (LES).
-	// - Sync the source to the target using rsync
-	// - Check for exit codes and capture output
-	// - If sync failed: LES
-	// - Then presuming all is well: LES
+	// Sync with rsync
+	// -> Need a slash at the end of the in folder to indicate to rsync to sync the contents into out
+	inWithSlash := inFolder + string(filepath.Separator)
+	rsyncLines, err := execCommand("rsync", "rsync", "-avu", "--delete", inWithSlash, outFolder)
+	mailReport.Sections = append(mailReport.Sections, section{
+		Title:    "rsync from input to output folder",
+		Detail:   fmt.Sprintf("[rsync -avu --delete %s %s]", inWithSlash, outFolder),
+		LogLines: rsyncLines,
+	})
+
+	logger.Info("sync successful!")
 	return nil
 }
 
@@ -191,6 +202,9 @@ func execCommand(
 	}
 	wr := io.MultiWriter(&logw, &linew)
 
+	logger.Debug("executing command",
+		"command", name,
+		"args", args)
 	cmd := exec.Command(name, args...)
 	cmd.Stdout = wr
 	cmd.Stderr = wr
@@ -198,6 +212,7 @@ func execCommand(
 	err = cmd.Run()
 	logw.Flush()
 	lines = linew.Lines()
+	lines = append(lines, "<end of logs>")
 	if err != nil {
 		return lines, fmt.Errorf("command %s failed: %w", name, err)
 	}
@@ -212,9 +227,9 @@ type report struct {
 }
 
 type section struct {
-	Title   string
-	Detail  string
-	Bullets []string
+	Title    string
+	Detail   string
+	LogLines []string
 }
 
 func sendMail(r report) error {
@@ -228,7 +243,7 @@ func sendMail(r report) error {
 	email := mail.NewMSG().
 		SetFrom(fmt.Sprintf("backup-helper <%s>", cfg.FromMail)).
 		AddTo(cfg.ToMail).
-		SetSubject(fmt.Sprintf("backup-helper %s", time.Now().Format(time.RFC3339))).
+		SetSubject(r.Title).
 		SetBody(mail.TextHTML, body)
 	if email.Error != nil {
 		return fmt.Errorf("could not build email: %w", email.Error)
@@ -245,7 +260,9 @@ func sendMail(r report) error {
 		return fmt.Errorf("could not send email: %w", err)
 	}
 
-	logger.Info("mail sent", "to", cfg.ToMail)
+	logger.Info("mail sent",
+		"to", cfg.ToMail,
+		"subject", r.Title)
 	return nil
 }
 
@@ -279,13 +296,15 @@ var reportFmt = `
 {{range .Sections}}
 <h3>{{.Title}}</h3>
 
-<p>{{.Detail}}</p>
+{{if .Detail}}<p>{{.Detail}}</p>{{end}}
 
-<ul>
-{{range .Bullets}}
-<li>{{.}}</li>
+{{if .LogLines}}
+<pre style="font-family: monospace; font-size: 10px; line-height: 12px; background-color: #b5b5b5;"><code>
+{{range .LogLines}}
+{{.}}
 {{end}}
-</ul>
+</code></pre>
+{{end}}
 
 {{end}}
 `
@@ -337,7 +356,7 @@ func testMail() error {
 			{
 				Title:  "Section 1",
 				Detail: "This is the paragraph for section 1",
-				Bullets: []string{
+				LogLines: []string{
 					"section 1 bullet 1",
 					"section 1 bullet 2",
 				},
@@ -345,7 +364,7 @@ func testMail() error {
 			{
 				Title:  "Section 2",
 				Detail: "This is the paragraph for section 2",
-				Bullets: []string{
+				LogLines: []string{
 					"section 2 bullet 1",
 					"section 2 bullet 2",
 					"section 2 bullet 3",
