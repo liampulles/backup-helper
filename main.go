@@ -47,6 +47,22 @@ func run() (err error) {
 		}
 	}()
 
+	// Send an email at the end
+	mailReport := report{
+		Title:  "Backup Helper report",
+		Detail: "The backup helper just ran. This report includes info on the cshatag output, and the rsync output.",
+	}
+	defer func() {
+		if err != nil {
+			mailReport.Sections = append(mailReport.Sections, section{
+				Title:  "Error",
+				Detail: fmt.Sprintf("Error contents: %s", err.Error()),
+			})
+		}
+		mErr := sendMail(mailReport)
+		err = errors.Join(err, mErr)
+	}()
+
 	// Parse args
 	args := os.Args[1:]
 	if len(args) != 2 {
@@ -68,8 +84,16 @@ func run() (err error) {
 	}
 	err = checkFolder(outFolder)
 	if err != nil {
-		return fmt.Errorf("in folder: %w", err)
+		return fmt.Errorf("out folder: %w", err)
 	}
+	mailReport.Sections = append(mailReport.Sections, section{
+		Title:  "Folders checked",
+		Detail: "This test tries to write, read, and delete a temporary file in both the input and output folders.",
+		Bullets: []string{
+			fmt.Sprintf("%s: OK", inFolder),
+			fmt.Sprintf("%s: OK", outFolder),
+		},
+	})
 
 	// Run cshatag for both (in parallel)
 	logger.Debug("running cshatag on input and output folders (in parallel)")
@@ -79,19 +103,29 @@ func run() (err error) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		cshaInLines, cshaInErr = execCommand("cshatag:input", "cshatag", "-recursive", inFolder)
+		cshaInLines, cshaInErr = execCommand("cshatag:input", "cshatag", "-q", "-recursive", inFolder)
 		logger.Info("cshatag on input finished",
 			"dir", inFolder,
 			"lines", len(cshaInLines))
 	}()
 	go func() {
 		defer wg.Done()
-		cshaOutLines, cshaOutErr = execCommand("cshatag:output", "cshatag", "-recursive", outFolder)
+		cshaOutLines, cshaOutErr = execCommand("cshatag:output", "cshatag", "-q", "-recursive", outFolder)
 		logger.Info("cshatag on output finished",
 			"dir", outFolder,
 			"lines", len(cshaOutLines))
 	}()
 	wg.Wait()
+	mailReport.Sections = append(mailReport.Sections, section{
+		Title:   "cshatag on input folder",
+		Detail:  "Log lines below...",
+		Bullets: cshaInLines,
+	})
+	mailReport.Sections = append(mailReport.Sections, section{
+		Title:   "cshatag on output folder",
+		Detail:  "Log lines below...",
+		Bullets: cshaOutLines,
+	})
 	if cshaInErr != nil {
 		err = errors.Join(err, fmt.Errorf("cshatag on input folder failed: %w", cshaInErr))
 	}
@@ -103,7 +137,6 @@ func run() (err error) {
 	}
 
 	// TODO:
-	// - Run cshatag for both folders (in parallel?)
 	// - Parse exit code and output to understand file events
 	// - If failed to run, or any corrupt files: log, send an email, and stop (LES).
 	// - Sync the source to the target using rsync
@@ -163,12 +196,13 @@ func execCommand(
 	cmd.Stderr = wr
 
 	err = cmd.Run()
+	logw.Flush()
+	lines = linew.Lines()
 	if err != nil {
-		return nil, fmt.Errorf("command %s failed: %w", name, err)
+		return lines, fmt.Errorf("command %s failed: %w", name, err)
 	}
 
-	logw.Flush()
-	return linew.Lines(), nil
+	return lines, nil
 }
 
 type report struct {
@@ -211,6 +245,7 @@ func sendMail(r report) error {
 		return fmt.Errorf("could not send email: %w", err)
 	}
 
+	logger.Info("mail sent", "to", cfg.ToMail)
 	return nil
 }
 
