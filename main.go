@@ -2,20 +2,24 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	mail "github.com/xhit/go-simple-mail/v2"
 )
 
+var logWriter io.Writer
 var logger *slog.Logger
 
 func main() {
@@ -33,7 +37,8 @@ func run() (err error) {
 		return fmt.Errorf("could not create log file %s: %w", logFilename, err)
 	}
 	defer logFile.Close()
-	logger = slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, logFile), nil))
+	logWriter = io.MultiWriter(os.Stderr, logFile)
+	logger = slog.New(slog.NewTextHandler(logWriter, nil))
 
 	// Log any error
 	defer func() {
@@ -64,6 +69,37 @@ func run() (err error) {
 	err = checkFolder(outFolder)
 	if err != nil {
 		return fmt.Errorf("in folder: %w", err)
+	}
+
+	// Run cshatag for both (in parallel)
+	logger.Debug("running cshatag on input and output folders (in parallel)")
+	var wg sync.WaitGroup
+	var cshaInErr, cshaOutErr error
+	var cshaInLines, cshaOutLines []string
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		cshaInLines, cshaInErr = execCommand("cshatag:input", "cshatag", "-recursive", inFolder)
+		logger.Info("cshatag on input finished",
+			"dir", inFolder,
+			"lines", len(cshaInLines))
+	}()
+	go func() {
+		defer wg.Done()
+		cshaOutLines, cshaOutErr = execCommand("cshatag:output", "cshatag", "-recursive", outFolder)
+		logger.Info("cshatag on output finished",
+			"dir", outFolder,
+			"lines", len(cshaOutLines))
+	}()
+	wg.Wait()
+	if cshaInErr != nil {
+		err = errors.Join(err, fmt.Errorf("cshatag on input folder failed: %w", cshaInErr))
+	}
+	if cshaOutErr != nil {
+		err = errors.Join(err, fmt.Errorf("cshatag on output folder failed: %w", cshaOutErr))
+	}
+	if err != nil {
+		return err
 	}
 
 	// TODO:
@@ -107,6 +143,32 @@ func checkFolder(dir string) error {
 
 	logger.Info("folder check passed", "dir", dir)
 	return nil
+}
+
+func execCommand(
+	logDesc string,
+	name string,
+	args ...string,
+) (lines []string, err error) {
+	// Write program output both to logs and to a buffer
+	linew := linesWriter{}
+	logw := lineBuffer{
+		Out:    logWriter,
+		Prefix: []byte(fmt.Sprintf("[%s] ", logDesc)),
+	}
+	wr := io.MultiWriter(&logw, &linew)
+
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = wr
+	cmd.Stderr = wr
+
+	err = cmd.Run()
+	if err != nil {
+		return nil, fmt.Errorf("command %s failed: %w", name, err)
+	}
+
+	logw.Flush()
+	return linew.Lines(), nil
 }
 
 type report struct {

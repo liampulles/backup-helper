@@ -11,3 +11,5 @@ backup-helper
 coverage.txt
 config.json
 *.log
+in/
+out/
