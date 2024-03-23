@@ -3,11 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
-	"text/template"
 	"time"
 
 	mail "github.com/xhit/go-simple-mail/v2"
@@ -94,7 +94,7 @@ func sendMail(r report) error {
 		SetFrom(fmt.Sprintf("backup-helper <%s>", cfg.FromMail)).
 		AddTo(cfg.ToMail).
 		SetSubject(fmt.Sprintf("backup-helper %s", time.Now().Format(time.RFC3339))).
-		SetBody(mail.TextPlain, body)
+		SetBody(mail.TextHTML, body)
 	if email.Error != nil {
 		return fmt.Errorf("could not build email: %w", email.Error)
 	}
@@ -136,20 +136,20 @@ func mailClient() (*mail.SMTPClient, error) {
 	return mailClient, nil
 }
 
-var reportFmt = `{{.Title}}
----
-{{.Detail}}
+var reportFmt = `<h2>{{.Title}}</h2>
+<p>{{.Detail}}</p>
 
 {{range .Sections}}
-===
-{{.Title}}
+<h3>{{.Title}}</h3>
 
-{{.Detail}}
+<p>{{.Detail}}</p>
 
+<ul>
 {{range .Bullets}}
-* {{.}}
+<li>{{.}}</li>
 {{end}}
-===
+</ul>
+
 {{end}}
 `
 var reportTmpl = template.Must(template.New("report").Parse(reportFmt))
