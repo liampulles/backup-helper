@@ -18,4 +18,4 @@ update:
 pre-commit: update clean coverage.txt
 	go mod tidy
 clean:
-	rm -f coverage.txt $(GOBIN)/backup-helper
+	rm -f coverage.txt $(GOBIN)/backup-helper *.log

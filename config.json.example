@@ -1,0 +1,9 @@
+{
+    "MailHost": "smtp.gmail.com",
+    "MailPort": 587,
+    "MailUser": "someone@gmail.com",
+    "MailPass": "some.app.password",
+    "MailEncryption": "SSL/TLS",
+    "FromMail": "someone+server@gmail.com",
+    "ToMail": "someone@gmail.com"
+}
